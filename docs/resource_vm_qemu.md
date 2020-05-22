@@ -82,6 +82,7 @@ The following arguments are supported in the resource block:
 
 * `name` - (Required) Name of the VM
 * `target_node` - (Required) Node to place the VM on
+* `vmid` - (Optional) VM ID to set (defaults to autoselect)
 * `desc` - (Optional) Description of the VM
 * `bios` - (Optional; defaults to seabios)
 * `onboot` - (Optional)

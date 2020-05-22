@@ -37,6 +37,11 @@ func resourceVmQemu() *schema.Resource {
 					return strings.TrimSpace(old) == strings.TrimSpace(new)
 				},
 			},
+			"vmid": {
+				Type:     schema.TypeInt,
+				Optional: true,
+				Default:  0,
+			},
 			"target_node": {
 				Type:     schema.TypeString,
 				Required: true,
@@ -480,10 +485,12 @@ func resourceVmQemu() *schema.Resource {
 var rxIPconfig = regexp.MustCompile("ip6?=([0-9a-fA-F:\\.]+)")
 
 func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
+        var dupVmr *pxapi.VmRef
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
 	client := pconf.Client
 	vmName := d.Get("name").(string)
+	vmId := d.Get("vmid").(int)
 	vga := d.Get("vga").(*schema.Set)
 	qemuVgaList := vga.List()
 	networks := d.Get("network").(*schema.Set)
@@ -538,30 +545,50 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	if len(qemuVgaList) > 0 {
 		config.QemuVga = qemuVgaList[0].(map[string]interface{})
 	}
-	log.Print("[DEBUG] checking for duplicate name")
-	dupVmr, _ := client.GetVmRefByName(vmName)
 
 	forceCreate := d.Get("force_create").(bool)
 	targetNode := d.Get("target_node").(string)
 	pool := d.Get("pool").(string)
 
-	if dupVmr != nil && forceCreate {
+	if vmId != 0 {
+	    // get vm by id
+	    log.Printf("[DEBUG] checking for duplicate id %d", vmId)
+ 	       vmr := pxapi.NewVmRef(vmId)
+	    _, err := client.GetVmInfo(vmr)
+	    if err == nil {
 		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=false to recycle", vmName, dupVmr.VmId())
-	} else if dupVmr != nil && dupVmr.Node() != targetNode {
-		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", vmName, dupVmr.VmId(), dupVmr.Node())
+		return fmt.Errorf("VM with duplicate vmId: %d on target_node=%s", vmr.VmId(), vmr.Node())
+	    }
+	} else {
+	    log.Print("[DEBUG] checking for duplicate name")
+	    dupVmr, _ = client.GetVmRefByName(vmName)
+
+    	    if dupVmr != nil && forceCreate {
+		    pmParallelEnd(pconf)
+		    return fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=false to recycle", vmName, dupVmr.VmId())
+	    } else if dupVmr != nil && dupVmr.Node() != targetNode {
+		    pmParallelEnd(pconf)
+		    return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", vmName, dupVmr.VmId(), dupVmr.Node())
+	    }
 	}
 
 	vmr := dupVmr
 
 	if vmr == nil {
-		// get unique id
-		nextid, err := nextVmId(pconf)
-		if err != nil {
-			pmParallelEnd(pconf)
-			return err
+		nextid := 0
+		if vmId != 0 {
+		    // set id
+		    nextid = vmId
+		} else {
+		    // get unique id
+		    var err error
+		    nextid, err = nextVmId(pconf)
+		    if err != nil {
+			    pmParallelEnd(pconf)
+			    return err
+		    }
 		}
+
 		vmr = pxapi.NewVmRef(nextid)
 
 		// set target node and pool
